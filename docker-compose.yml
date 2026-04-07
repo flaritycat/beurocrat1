@@ -1,0 +1,80 @@
+name: kommune
+
+services:
+  kommune-db:
+    image: postgis/postgis:16-3.4
+    container_name: kommune-db
+    restart: unless-stopped
+    env_file:
+      - .env
+    environment:
+      POSTGRES_DB: ${POSTGRES_DB}
+      POSTGRES_USER: ${POSTGRES_USER}
+      POSTGRES_PASSWORD: ${POSTGRES_PASSWORD}
+    healthcheck:
+      test: ["CMD-SHELL", "pg_isready -U ${POSTGRES_USER} -d ${POSTGRES_DB}"]
+      interval: 10s
+      timeout: 5s
+      retries: 10
+    volumes:
+      - kommune_db_data:/var/lib/postgresql/data
+    networks:
+      - kommune-internal
+
+  kommune-backend:
+    container_name: kommune-backend
+    build:
+      context: .
+      dockerfile: backend/Dockerfile
+    restart: unless-stopped
+    env_file:
+      - .env
+    depends_on:
+      kommune-db:
+        condition: service_healthy
+    expose:
+      - "3000"
+    healthcheck:
+      test:
+        [
+          "CMD-SHELL",
+          "node -e \"fetch('http://127.0.0.1:3000/kommune/api/healthz').then((r) => process.exit(r.ok ? 0 : 1)).catch(() => process.exit(1))\"",
+        ]
+      interval: 15s
+      timeout: 5s
+      retries: 10
+    networks:
+      - kommune-internal
+
+  kommune-frontend:
+    container_name: kommune-frontend
+    build:
+      context: .
+      dockerfile: frontend/Dockerfile
+      args:
+        VITE_APP_BASE_PATH: ${VITE_APP_BASE_PATH}
+        VITE_API_BASE_PATH: ${VITE_API_BASE_PATH}
+    restart: unless-stopped
+    depends_on:
+      kommune-backend:
+        condition: service_healthy
+    ports:
+      - "127.0.0.1:${KOMMUNE_PUBLIC_PORT:-18080}:8080"
+    healthcheck:
+      test: ["CMD-SHELL", "wget -qO- http://127.0.0.1:8080/kommune/healthz >/dev/null 2>&1 || exit 1"]
+      interval: 15s
+      timeout: 5s
+      retries: 10
+    networks:
+      - kommune-internal
+      - proxy-edge
+
+volumes:
+  kommune_db_data:
+
+networks:
+  kommune-internal:
+    name: kommune-internal
+  proxy-edge:
+    external: true
+    name: arctic_edge_public
